@@ -78,6 +78,8 @@ COPY --chown=appuser:appuser configs/ /workspace/configs/
 COPY --chown=appuser:appuser src/ /workspace/src/
 COPY --chown=appuser:appuser scripts/ /workspace/scripts/
 COPY --chown=appuser:appuser docs/ /workspace/docs/
+COPY --chown=appuser:appuser data/ /workspace/data/
+COPY --chown=appuser:appuser checkpoints/ /workspace/checkpoints/
 
 USER appuser
 
