@@ -1,0 +1,143 @@
+# ==============================================================================
+# Hierarchical Master Configuration: Multimodal Vi-Hmong S2S Translation System
+# Conforms to Requirements R1, R2, R3, R4, R5, R6 (< 1.5s real-time target)
+# ==============================================================================
+
+# Global System Settings
+system:
+  device: "cuda"                  # Preferred compute device ('cuda' with automatic fallback to 'cpu')
+  fallback_device: "cpu"
+  seed: 42                        # Random seed for reproducibility
+  fp16: true                      # Automatic Mixed Precision (AMP) for VRAM conservation
+  num_workers: 2                  # DataLoader subprocesses
+  log_level: "INFO"               # Application log verbosity
+
+# Audio Ingestion & Feature Extraction Parameters
+audio:
+  sample_rate: 16000              # Unified sampling frequency (16 kHz)
+  channels: 1                     # Mono audio processing
+  sample_width: 2                 # 16-bit linear PCM (2 bytes/sample)
+  n_fft: 1024                     # FFT analysis window length
+  win_length: 1024                # Window length for STFT
+  hop_length: 256                 # Frame hop length (16ms frame shift)
+  n_mels: 80                      # 80-channel Log Mel-filterbank
+  f_min: 0.0                      # Minimum acoustic frequency (Hz)
+  f_max: 8000.0                   # Maximum acoustic frequency (Nyquist bound at 16kHz)
+  rms_target_db: -20.0            # Target volume for RMS normalization (-20 dBFS)
+  silence_trim_db: 30.0           # Silence threshold for edge trimming
+
+# Vietnamese Speech-to-Text (Conformer-CTC Acoustic Model)
+stt:
+  model_architecture: "VietnameseSTT"
+  pretrained_model: "nguyenvulebinh/wav2vec2-base-vietnamese-250h"
+  use_pretrained: true
+  sample_rate: 16000
+  blank_index: 0                  # CTC Blank token index
+  blank_id: 0                     # Alias for blank_index
+  vocab_size: 100                 # Character-level vocabulary dimension (Vietnamese diacritics + spaces)
+  conformer_dim: 256              # Acoustic encoder dimension
+  d_model: 256                    # Standard transformer model dimension
+  n_heads: 4                      # Multi-head attention heads
+  num_layers: 8                   # Stacked Conformer encoder blocks
+  ffn_dim: 1024                   # Feed-forward hidden expansion dimension
+  dropout: 0.1                    # Attention and feature dropout
+  greedy_streaming: true          # Fast argmax decoding for real-time streaming chunks
+  beam_size: 4                    # Prefix beam search width for offline transcription
+  beam_threshold: 10.0            # Pruning threshold for beam expansion
+  language: "vi"                  # Source acoustic language tag
+
+# Low-Resource Machine Translation (NLLB-200 Seq2Seq + RPA Morphology Normalization)
+mt:
+  model_name: "facebook/nllb-200-distilled-600M"
+  src_lang: "vie_Latn"            # Vietnamese FLORES-200 code
+  tgt_lang: "mww_Latn"            # White Hmong (Hmong Daw) FLORES-200 code
+  alt_tgt_lang: "hmn_Latn"        # Canonical language identifier alias
+  max_source_length: 128          # Maximum input token length
+  max_target_length: 128          # Maximum output token length
+  max_len: 128                    # Alias for max target length
+  beam_size: 4                    # Generation beam width
+  num_beams: 4                    # Beam search width alias
+  rep_penalty: 1.2                # Repetition penalty parameter (θ=1.2)
+  repetition_penalty: 1.2         # Full parameter name alias
+  length_penalty: 1.0             # Length normalization exponent
+  no_repeat_ngram_size: 3         # Prevents infinite phrase looping in low-resource regime
+  lora:
+    enabled: true                 # Parameter-efficient fine-tuning
+    r: 16                         # LoRA rank dimension (r=16)
+    lora_alpha: 32                # LoRA scaling factor (alpha=32)
+    alpha: 32                     # Alias for lora_alpha
+    lora_dropout: 0.05            # LoRA dropout rate
+    target_modules: ["q_proj", "v_proj", "k_proj", "out_proj"]
+  rpa_morphology:
+    preserve_tones: true          # Preserve Hmong Daw RPA tone letters
+    valid_tones: ["b", "m", "d", "j", "v", "s", "g", ""]
+
+# Hmong Daw Text-to-Speech (Compact Low-Resource VITS Architecture)
+tts:
+  model_name: "HmongVITS"
+  sample_rate: 16000              # Synthesis sampling rate (16 kHz)
+  n_vocab: 128                    # RPA phonological/character token count
+  segment_size: 8192              # Training audio slice size
+  text_encoder:
+    hidden_channels: 192          # VITS prior network hidden channel dimension
+    filter_channels: 768          # FFN expansion filter channels
+    n_heads: 2                    # Multi-head attention heads (edge-memory compliant)
+    n_layers: 6                   # Depth of Transformer encoder layers
+    kernel_size: 3                # Local 1D convolution kernel
+    p_dropout: 0.1                # Encoder dropout probability
+  duration_predictor:
+    filter_channels: 256          # Stochastic/AlignNet duration predictor channels
+    kernel_size: 3                # Duration predictor receptive field
+    p_dropout: 0.5                # Regularization dropout
+  decoder:
+    upsample_rates: [8, 8, 2, 2]  # Total upsampling ratio: 8 * 8 * 2 * 2 = 256
+    upsample_kernel_sizes: [16, 16, 4, 4]
+    resblock_kernel_sizes: [3, 7, 11]
+
+# Real-Time Streaming & RingBuffer Voice Activity Detection
+streaming:
+  vad_threshold: 0.5              # Voice activity decision probability threshold
+  chunk_size_ms: 300              # Ingestion frame window (300ms)
+  min_silence_ms: 400             # Minimum silence duration to trigger utterance endpointing (400ms)
+  min_speech_ms: 200              # Minimum speech duration to qualify as valid utterance
+  max_buffer_duration_s: 15.0     # Maximum ring buffer retention cap (prevents memory leaks)
+  audio_chunk_bytes: 9600         # 300ms * 16,000 samples/sec * 2 bytes = 9,600 bytes
+  sample_rate: 16000
+
+# Training Hyperparameters for Model Fine-Tuning
+training:
+  stt:
+    learning_rate: 0.0001
+    batch_size: 16
+    epochs: 50
+    warmup_steps: 1000
+    weight_decay: 0.01
+    checkpoint_metric: "cer"
+  mt:
+    learning_rate: 0.0003
+    batch_size: 32
+    epochs: 30
+    warmup_steps: 500
+    label_smoothing: 0.1
+    checkpoint_metric: "sacrebleu"
+  tts:
+    learning_rate: 0.0002
+    batch_size: 16
+    epochs: 100
+    c_mel: 45.0
+    c_kl: 1.0
+    checkpoint_metric: "mel_loss"
+
+# Academic Evaluation & Benchmark Suite
+evaluation:
+  test_dataset_path: "data/test_triparallel.json"
+  batch_size: 1
+  warmup_iterations: 5
+  export_latex_path: "table_results.tex"
+  target_latency_sec: 1.5
+
+# Filesystem Storage Locations
+paths:
+  checkpoints_dir: "checkpoints/"
+  data_dir: "data/"
+  logs_dir: "logs/"

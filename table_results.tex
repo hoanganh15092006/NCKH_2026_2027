@@ -1,0 +1,65 @@
+% ==============================================================================
+% Publication-Grade Academic Benchmark Results
+% Multimodal Vietnamese-to-H'Mong (Hmong Daw RPA) Speech-to-Speech System
+% Adheres to IEEE / ACM and Vietnamese NCKH Guidelines (booktabs standard)
+% Generated: 2026-11-05T13:22:07Z | Compute Device: CPU | Samples: 3
+% ==============================================================================
+
+\begin{table*}[t]
+\centering
+\caption{Comprehensive Academic Benchmark Results of the Multimodal Vietnamese-to-H'Mong Speech-to-Speech Translation System Across All Pipeline Modules (STT, MT, TTS, and Cascaded End-to-End S2S).}
+\label{tab:vietnamese_hmong_s2s_benchmark}
+\small
+\begin{tabular}{llccc}
+\toprule
+\textbf{Pipeline Module} & \textbf{Evaluation Metric} & \textbf{Observed Value} & \textbf{NCKH Target} & \textbf{Status} \\
+\midrule
+\multicolumn{5}{l}{\textit{\textbf{Module 1: Vietnamese Speech Recognition (Conformer-CTC STT)}}} \\
+\quad Conformer-CTC & Word Error Rate (WER) & 100.00\% & $< 20.00\%$ & Sub-optimal \\
+\quad Conformer-CTC & Character Error Rate (CER) & 88.06\% & $< 10.00\%$ & Sub-optimal \\
+\quad Conformer-CTC & Mean Inference Latency & 57.5\,ms & $< 400.0\,$ms & Passed \\
+\quad Conformer-CTC & P50 Latency (Median) & 56.1\,ms & $< 350.0\,$ms & Passed \\
+\midrule
+\multicolumn{5}{l}{\textit{\textbf{Module 2: Machine Translation (Vietnamese $\rightarrow$ H'Mong Daw RPA Seq2Seq)}}} \\
+\quad Seq2Seq + LoRA & BLEU-4 & 100.00 & $> 25.00$ & Passed \\
+\quad Seq2Seq + LoRA & SacreBLEU & 100.00 & $> 25.00$ & Passed \\
+\quad Seq2Seq + LoRA & chrF++ (word order=2) & 100.00 & $> 45.00$ & Passed \\
+\quad Seq2Seq + LoRA & Mean Translation Latency & 0.5\,ms & $< 250.0\,$ms & Passed \\
+\midrule
+\multicolumn{5}{l}{\textit{\textbf{Module 3: Speech Synthesis (H'Mong Daw VITS Neural TTS)}}} \\
+\quad Low-Resource VITS & Real-Time Factor (RTF) & 23.54$\times$ & $> 1.50\times$ & Passed \\
+\quad Low-Resource VITS & Mean Synthesis Latency & 40.8\,ms & $< 450.0\,$ms & Passed \\
+\quad Low-Resource VITS & Mean Audio Duration & 1.01\,s & --- & Validated \\
+\midrule
+\multicolumn{5}{l}{\textit{\textbf{Module 4: Cascaded End-to-End Speech-to-Speech Translation Pipeline}}} \\
+\quad Cascading Engine & End-to-End Latency P50 (Median) & 90.3\,ms & $< 1500.0\,$ms & Passed \\
+\quad Cascading Engine & End-to-End Latency P90 & 101.0\,ms & $< 1500.0\,$ms & Passed \\
+\quad Cascading Engine & End-to-End Latency P99 & 103.4\,ms & $< 1500.0\,$ms & Passed \\
+\quad Cascading Engine & Latency Mean $\pm$ Std & 93.6 $\pm$ 7.2\,ms & $< 1500.0\,$ms & Passed \\
+\quad Cascading Engine & End-to-End Real-Time Factor (RTF) & 1.55$\times$ & $> 1.00\times$ & Passed \\
+\quad Cascading Engine & Real-Time Target ($< 1.5$\,s) Compliance & 100.0\% & $100.0\%$ & Met \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+% ------------------------------------------------------------------------------
+% Table 2: Sub-Stage Latency Decomposition
+% ------------------------------------------------------------------------------
+\begin{table}[htbp]
+\centering
+\caption{End-to-End Speech-to-Speech Latency Decomposition across Sub-Stages (in Milliseconds).}
+\label{tab:latency_decomposition}
+\small
+\begin{tabular}{lccc}
+\toprule
+\textbf{Pipeline Stage} & \textbf{Mean Latency (ms)} & \textbf{Relative Share (\%)} & \textbf{Constraint Target} \\
+\midrule
+Audio Preprocessing & 11.0 & 11.7\% & $< 50.0\,$ms \\
+Speech Recognition (STT) & 44.4 & 47.5\% & $< 400.0\,$ms \\
+Machine Translation (MT) & 7.6 & 8.1\% & $< 250.0\,$ms \\
+Speech Synthesis (TTS) & 30.6 & 32.7\% & $< 450.0\,$ms \\
+\midrule
+\textbf{Total Cascaded S2S} & \textbf{93.6} & \textbf{100.0\%} & \textbf{$< 1500.0\,$ms} \\
+\bottomrule
+\end{tabular}
+\end{table}

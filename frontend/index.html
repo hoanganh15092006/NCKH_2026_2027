@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>S2S Real-Time Translation | Tiếng Việt ➔ H'Mông Daw RPA</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #131b2e;
+      --card-border: #1e293b;
+      --accent: #06b6d4;
+      --accent-grad: linear-gradient(135deg, #06b6d4 0%, #3b82f6 50%, #8b5cf6 100%);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --green: #10b981;
+      --red: #ef4444;
+      --amber: #f59e0b;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text-main);
+      font-family: var(--font);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px;
+    }
+    .container {
+      width: 100%;
+      max-width: 960px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    header {
+      text-align: center;
+      padding: 16px 0;
+    }
+    h1 {
+      font-size: 26px;
+      font-weight: 800;
+      background: var(--accent-grad);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+    }
+    p.subtitle {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+    .badge-bar {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    .tag {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: rgba(6, 182, 212, 0.12);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .tag.status-ready { background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.4); color: var(--green); }
+    .tag.status-recording { background: rgba(239, 68, 68, 0.2); border-color: var(--red); color: var(--red); animation: pulse 1.2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    }
+    
+    /* Visualizer Canvas */
+    .canvas-container {
+      position: relative;
+      background: #0a0e1a;
+      border-radius: 10px;
+      border: 1px solid #1a2234;
+      overflow: hidden;
+      height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    
+    /* Controls */
+    .controls {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      align-items: center;
+      flex-wrap: wrap;
+      margin: 10px 0;
+    }
+    button {
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      padding: 12px 24px;
+      border-radius: 10px;
+      border: none;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .btn-record {
+      background: #ef4444;
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4);
+    }
+    .btn-record:hover:not(:disabled) {
+      background: #dc2626;
+      transform: translateY(-1px);
+    }
+    .btn-stop {
+      background: #334155;
+      color: #f8fafc;
+    }
+    .btn-stop:hover:not(:disabled) {
+      background: #475569;
+    }
+    .btn-clear {
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid #334155;
+    }
+    .btn-clear:hover {
+      background: #1e293b;
+      color: #fff;
+    }
+    
+    /* Dual Stream Grid */
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 768px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+    
+    .panel {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+    }
+    .output-box {
+      min-height: 110px;
+      background: #0a0f1d;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      padding: 14px;
+      font-size: 15px;
+      line-height: 1.6;
+      color: #f1f5f9;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .output-box.empty {
+      color: #475569;
+      font-style: italic;
+    }
+    
+    /* Audio Player Section */
+    .audio-player-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #0b1120;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      padding: 12px 16px;
+      margin-top: 10px;
+    }
+    .audio-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .play-btn {
+      background: var(--accent);
+      color: #041017;
+      padding: 8px 16px;
+      font-size: 13px;
+      border-radius: 8px;
+    }
+    .play-btn:hover { background: #22d3ee; }
+    
+    /* Latency Meter */
+    .metrics {
+      display: flex;
+      gap: 16px;
+      font-size: 12px;
+      color: var(--text-muted);
+      justify-content: flex-end;
+      align-items: center;
+      margin-top: 4px;
+    }
+    .metric-val {
+      color: var(--green);
+      font-weight: 700;
+    }
+    
+    footer {
+      text-align: center;
+      font-size: 12px;
+      color: #475569;
+      padding: 16px 0;
+      margin-top: auto;
+    }
+
+    /* Audio File Upload Card & Samples */
+    .file-card {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .file-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .file-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .btn-upload {
+      background: #06b6d4;
+      color: #041017;
+      font-weight: 600;
+    }
+    .btn-upload:hover:not(:disabled) {
+      background: #22d3ee;
+    }
+    .sample-bar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 4px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .btn-sample {
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.35);
+      color: #93c5fd;
+      padding: 6px 12px;
+      font-size: 12px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .btn-sample:hover {
+      background: rgba(59, 130, 246, 0.25);
+    }
+    .text-input-card {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .text-input-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .btn-sample-chip {
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.35);
+      color: #93c5fd;
+      padding: 6px 12px;
+      font-size: 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .btn-sample-chip:hover {
+      background: rgba(59, 130, 246, 0.3);
+      color: #bfdbfe;
+    }
+    @keyframes pulse-replay {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(6, 182, 212, 0.7); }
+      50% { box-shadow: 0 0 0 10px rgba(6, 182, 212, 0); }
+    }
+    .btn-replay-pulse {
+      animation: pulse-replay 1.5s infinite;
+      border: 1px solid #22d3ee !important;
+      background: #0891b2 !important;
+      color: #fff !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>HỆ THỐNG DỊCH NÓI-SANG-NÓI ĐA PHƯƠNG THỨC</h1>
+      <p class="subtitle">Vietnamese Speech ➔ H'Mông Daw RPA Machine Translation & Audio Synthesis</p>
+      <div class="badge-bar">
+        <span class="tag">Dual-Stage VAD (STE + Silero)</span>
+        <span class="tag">Conformer-CTC</span>
+        <span class="tag">NLLB-200 / LoRA Seq2Seq</span>
+        <span class="tag">Low-Resource VITS 16kHz</span>
+        <span id="statusTag" class="tag status-ready">Sẵn sàng / Ready</span>
+      </div>
+    </header>
+
+    <div class="card" style="padding: 12px 18px; margin-bottom: 4px; display: flex; align-items: center; gap: 12px; background: rgba(19, 27, 46, 0.95); border: 1px solid #1e293b; border-radius: 12px;">
+      <span style="font-size: 13px; font-weight: 600; color: #94a3b8; white-space: nowrap;">API Server URL:</span>
+      <input id="serverUrlInput" type="text" placeholder="Để trống nếu chạy chung host (hoặc điền: https://your-backend.railway.app)" style="flex: 1; background: #090d16; border: 1px solid #334155; color: #f8fafc; padding: 7px 12px; border-radius: 6px; font-size: 13px; outline: none;" />
+    </div>
+    <div class="card">
+      <div class="canvas-container">
+        <canvas id="waveformCanvas"></canvas>
+      </div>
+
+      <div class="controls">
+        <button id="recordBtn" class="btn-record">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+          Bắt đầu thu âm (Mic)
+        </button>
+        <button id="stopBtn" class="btn-stop" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          Dừng thu âm
+        </button>
+        <button id="clearBtn" class="btn-clear">Xóa kết quả</button>
+      </div>
+
+      <div class="metrics">
+        <span>Độ trễ xử lý (Latency): <span id="latencyDisplay" class="metric-val">-- ms</span></span>
+        <span>Mục tiêu: <span class="metric-val">&lt; 1.5s</span></span>
+      </div>
+    </div>
+
+    <!-- Text Input Card for Direct Vietnamese Typing -->
+    <div class="card text-input-card">
+      <div class="text-input-header">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+        </svg>
+        <span>Nhập văn bản Tiếng Việt (Dual Input: Text to Speech)</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <textarea id="viTextInput" placeholder="Nhập văn bản tiếng Việt cần dịch tại đây (ví dụ: 'Tôi cần mua thuốc cảm cúm và hạ sốt')..." rows="3" style="width: 100%; background: #0a0f1d; border: 1px solid #1e293b; border-radius: 8px; padding: 10px 12px; color: #f8fafc; font-size: 14px; resize: vertical; font-family: inherit; outline: none;"></textarea>
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+          <div class="sample-bar" style="margin: 0;">
+            <span>Gợi ý:</span>
+            <button class="btn-sample-chip" type="button" data-text="xin chào bạn hôm nay bạn có khỏe không">Xin chào</button>
+            <button class="btn-sample-chip" type="button" data-text="bác sĩ cho tôi hỏi bệnh viện ở đâu">Bệnh viện ở đâu</button>
+            <button class="btn-sample-chip" type="button" data-text="tôi cần mua thuốc cảm cúm và hạ sốt">Thuốc cảm cúm</button>
+            <button class="btn-sample-chip" type="button" data-text="hôm nay thời tiết vùng núi tây bắc rất đẹp">Thời tiết Tây Bắc</button>
+          </div>
+          <div style="display: flex; gap: 8px; margin-left: auto;">
+            <button id="clearTextBtn" class="btn-clear" type="button">Xóa chữ</button>
+            <button id="translateTextBtn" class="btn-upload" type="button">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              Dịch văn bản &amp; Phát âm
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Audio File Upload & Sample Speech Card -->
+    <div class="card file-card">
+      <div class="file-card-header">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <span>Tải lên tệp âm thanh Tiếng Việt (WAV / MP3)</span>
+      </div>
+      <div class="file-actions">
+        <input type="file" id="audioFileInput" accept=".wav,.mp3,audio/wav,audio/mpeg,audio/*" style="display:none;" />
+        <button id="selectFileBtn" class="btn-clear" type="button">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          Chọn tệp WAV/MP3
+        </button>
+        <span id="selectedFileName" style="font-size: 13px; color: var(--text-muted);">Chưa chọn tệp</span>
+        <button id="uploadTranslateBtn" class="btn-upload" disabled type="button" style="margin-left: auto;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Dịch S2S ngay
+        </button>
+      </div>
+      <div class="sample-bar">
+        <span>Câu mẫu kiểm thử:</span>
+        <button class="btn-sample" data-text="xin chào bạn hôm nay bạn có khỏe không">Xin chào bạn hôm nay bạn có khỏe không?</button>
+        <button class="btn-sample" data-text="tôi bị sốt cao từ tối hôm qua đến giờ">Tôi bị sốt cao từ tối hôm qua đến giờ</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <!-- Vietnamese Panel -->
+      <div class="card panel">
+        <div class="panel-header">
+          <span>🇻🇳 Tiếng Việt (Vietnamese ASR)</span>
+          <span id="viStatus" style="font-weight: 500; font-size: 11px;">16kHz Mono</span>
+        </div>
+        <div id="viOutput" class="output-box empty">Đang chờ âm thanh tiếng Việt...</div>
+      </div>
+
+      <!-- Hmong Daw Panel -->
+      <div class="card panel">
+        <div class="panel-header">
+          <span>🏔️ Tiếng H'Mông Trắng (Hmong Daw RPA)</span>
+          <span style="font-weight: 500; font-size: 11px; color: var(--accent);">8 Tone Codas</span>
+        </div>
+        <div id="hmOutput" class="output-box empty">Kết quả dịch sẽ xuất hiện tại đây...</div>
+      </div>
+    </div>
+
+    <!-- Audio Synthesis Player Card -->
+    <div class="card" style="display: flex; flex-direction: column; gap: 10px; background: #0b1120; border: 1px solid #1e293b; border-radius: 12px; padding: 16px;">
+      <div class="audio-player-card" style="margin-top: 0; padding: 0; border: none; background: transparent;">
+        <div class="audio-info">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+          </svg>
+          <div>
+            <div style="color: var(--text-main); font-weight: 600;">Âm thanh Tiếng H'Mông Tái tạo</div>
+            <div style="font-size: 11px;">VITS Neural Vocoder at 16,000 Hz</div>
+          </div>
+        </div>
+        <button id="replayBtn" class="play-btn" disabled>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Phát lại (Replay)
+        </button>
+      </div>
+      <!-- Browser Autoplay Notice -->
+      <div id="autoplayNotice" style="display: none; padding: 8px 12px; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; font-size: 13px; color: #fbbf24;">
+        ⚠️ Trình duyệt chặn tự động phát âm thanh. Vui lòng bấm nút <strong>'Phát lại (Replay)'</strong> để nghe.
+      </div>
+      <!-- Native Accessible HTML5 Audio Player -->
+      <audio id="nativeAudioPlayer" controls style="width: 100%; margin-top: 8px;"></audio>
+    </div>
+
+    <footer>
+      Hệ thống dịch thuật Speech-to-Speech Thời gian thực | Nghiên cứu Khoa học NCKH
+    </footer>
+  </div>
+
+  <script>
+    // State
+    let isRecording = false;
+    let audioContext = null;
+    let mediaStream = null;
+    let processorNode = null;
+    let analyserNode = null;
+    let websocket = null;
+    let canvasAnimationId = null;
+    let lastAudioBlobUrl = null;
+    let audioPlayer = new Audio();
+
+    // DOM Elements
+    const recordBtn = document.getElementById("recordBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const replayBtn = document.getElementById("replayBtn");
+    const statusTag = document.getElementById("statusTag");
+    const viOutput = document.getElementById("viOutput");
+    const hmOutput = document.getElementById("hmOutput");
+    const latencyDisplay = document.getElementById("latencyDisplay");
+    const canvas = document.getElementById("waveformCanvas");
+    const canvasCtx = canvas.getContext("2d");
+    const viTextInput = document.getElementById("viTextInput");
+    const translateTextBtn = document.getElementById("translateTextBtn");
+    const clearTextBtn = document.getElementById("clearTextBtn");
+    const autoplayNotice = document.getElementById("autoplayNotice");
+    const nativeAudioPlayer = document.getElementById("nativeAudioPlayer");
+
+    // Audio Autoplay Policy Mitigation & User Gesture Unlocker
+    function unlockAudioPlayback() {
+      if (audioContext && audioContext.state === "suspended") {
+        audioContext.resume().catch(() => {});
+      }
+      if (audioPlayer) {
+        audioPlayer.play().then(() => {
+          audioPlayer.pause();
+        }).catch(() => {});
+      }
+    }
+
+    // Resize canvas
+    function resizeCanvas() {
+      canvas.width = canvas.parentElement.clientWidth;
+      canvas.height = canvas.parentElement.clientHeight;
+    }
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+    // Idle Oscilloscope animation
+    function drawIdleWaveform() {
+      if (isRecording) return;
+      canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+      canvasCtx.lineWidth = 2;
+      canvasCtx.strokeStyle = "rgba(6, 182, 212, 0.3)";
+      canvasCtx.beginPath();
+
+      const time = performance.now() * 0.002;
+      const width = canvas.width;
+      const height = canvas.height;
+      const mid = height / 2;
+
+      for (let x = 0; x < width; x++) {
+        const y = mid + Math.sin(x * 0.02 + time) * 6 * Math.sin(x * 0.005);
+        if (x === 0) canvasCtx.moveTo(x, y);
+        else canvasCtx.lineTo(x, y);
+      }
+      canvasCtx.stroke();
+      canvasAnimationId = requestAnimationFrame(drawIdleWaveform);
+    }
+    drawIdleWaveform();
+
+    // Active Oscilloscope rendering
+    function drawActiveWaveform() {
+      if (!isRecording || !analyserNode) return;
+      const bufferLength = analyserNode.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      analyserNode.getByteTimeDomainData(dataArray);
+
+      canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+      canvasCtx.lineWidth = 2.5;
+      canvasCtx.strokeStyle = "#06b6d4";
+      canvasCtx.beginPath();
+
+      const sliceWidth = canvas.width * 1.0 / bufferLength;
+      let x = 0;
+
+      for (let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 128.0;
+        const y = v * (canvas.height / 2);
+        if (i === 0) canvasCtx.moveTo(x, y);
+        else canvasCtx.lineTo(x, y);
+        x += sliceWidth;
+      }
+      canvasCtx.lineTo(canvas.width, canvas.height / 2);
+      canvasCtx.stroke();
+
+      canvasAnimationId = requestAnimationFrame(drawActiveWaveform);
+    }
+
+    // Audio Resampling & Conversion: Float32 -> 16-bit PCM at 16kHz
+    function downsampleTo16k(inputBuffer, inputSampleRate) {
+      if (inputSampleRate === 16000) {
+        const pcm16 = new Int16Array(inputBuffer.length);
+        for (let i = 0; i < inputBuffer.length; i++) {
+          const s = Math.max(-1, Math.min(1, inputBuffer[i]));
+          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        return pcm16.buffer;
+      }
+      const ratio = inputSampleRate / 16000;
+      const newLength = Math.round(inputBuffer.length / ratio);
+      const pcm16 = new Int16Array(newLength);
+      for (let i = 0; i < newLength; i++) {
+        const idx = Math.floor(i * ratio);
+        const s = Math.max(-1, Math.min(1, inputBuffer[idx]));
+        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+      return pcm16.buffer;
+    }
+
+    // Start Recording & Streaming
+    async function startRecording() {
+      try {
+        let customServer = (document.getElementById('serverUrlInput') && document.getElementById('serverUrlInput').value || '').trim();
+        let wsUrl = '';
+        if (customServer) {
+          customServer = customServer.replace(/^http/, 'ws');
+          if (!customServer.startsWith('ws://') && !customServer.startsWith('wss://')) {
+            customServer = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + customServer;
+          }
+          customServer = customServer.replace(/\/+$/, '');
+          wsUrl = `${customServer}/ws/s2s_live?events=true&format=wav`;
+        } else {
+          const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+          wsUrl = `${proto}//${window.location.host}/ws/s2s_live?events=true&format=wav`;
+        }
+
+        websocket = new WebSocket(wsUrl);
+        websocket.binaryType = "arraybuffer";
+
+        websocket.onopen = () => {
+          statusTag.className = "tag status-recording";
+          statusTag.innerText = "Đang thu âm / Recording...";
+        };
+
+        websocket.onmessage = async (event) => {
+          if (typeof event.data === "string") {
+            const data = JSON.parse(event.data);
+            if (data.type === "result") {
+              if (data.vi_text) {
+                viOutput.className = "output-box";
+                viOutput.innerText = data.vi_text;
+              }
+              if (data.hmong_text) {
+                hmOutput.className = "output-box";
+                hmOutput.innerText = data.hmong_text;
+              }
+              if (data.latency_ms) {
+                latencyDisplay.innerText = `${data.latency_ms} ms`;
+              }
+              // Note: Audio playback is handled exclusively by the incoming binary ArrayBuffer frame
+              // to eliminate double-playback and audio echoing race conditions.
+            }
+          } else if (event.data instanceof ArrayBuffer) {
+            const blob = new Blob([event.data], { type: "audio/wav" });
+            playSynthesizedAudio(blob);
+          }
+        };
+
+        websocket.onerror = (err) => {
+          console.error("WebSocket error:", err);
+        };
+
+        websocket.onclose = () => {
+          if (isRecording) stopRecording();
+        };
+
+        // Capture Mic
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: true,
+            noiseSuppression: true
+          }
+        });
+
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        const source = audioContext.createMediaStreamSource(mediaStream);
+        analyserNode = audioContext.createAnalyser();
+        analyserNode.fftSize = 512;
+        source.connect(analyserNode);
+
+        // 300ms chunk processing (approx 4096 or 4800 samples)
+        processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+        source.connect(processorNode);
+        processorNode.connect(audioContext.destination);
+
+        processorNode.onaudioprocess = (e) => {
+          if (!isRecording || !websocket || websocket.readyState !== WebSocket.OPEN) return;
+          const inputData = e.inputBuffer.getChannelData(0);
+          const pcmChunk = downsampleTo16k(inputData, audioContext.sampleRate);
+          websocket.send(pcmChunk);
+        };
+
+        isRecording = true;
+        recordBtn.disabled = true;
+        stopBtn.disabled = false;
+        cancelAnimationFrame(canvasAnimationId);
+        drawActiveWaveform();
+
+      } catch (err) {
+        console.error("Failed to access microphone:", err);
+        alert("Không thể truy cập microphone. Vui lòng cấp quyền truy cập trong trình duyệt.");
+        stopRecording();
+      }
+    }
+
+    // Stop Recording
+    function stopRecording() {
+      isRecording = false;
+      recordBtn.disabled = false;
+      stopBtn.disabled = true;
+      statusTag.className = "tag status-ready";
+      statusTag.innerText = "Sẵn sàng / Ready";
+
+      if (processorNode) {
+        processorNode.disconnect();
+        processorNode = null;
+      }
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
+      }
+      if (audioContext && audioContext.state !== "closed") {
+        audioContext.close();
+        audioContext = null;
+      }
+      if (websocket && websocket.readyState === WebSocket.OPEN) {
+        websocket.send(JSON.stringify({ command: "flush" }));
+        setTimeout(() => {
+          if (websocket) websocket.close();
+        }, 500);
+      }
+
+      cancelAnimationFrame(canvasAnimationId);
+      drawIdleWaveform();
+    }
+
+    // Play Synthesized Audio with Autoplay Mitigation
+    function playSynthesizedAudio(blob) {
+      if (lastAudioBlobUrl) {
+        URL.revokeObjectURL(lastAudioBlobUrl);
+      }
+      lastAudioBlobUrl = URL.createObjectURL(blob);
+      audioPlayer.src = lastAudioBlobUrl;
+      if (nativeAudioPlayer) {
+        nativeAudioPlayer.src = lastAudioBlobUrl;
+      }
+      const playPromise = audioPlayer.play();
+      if (playPromise !== undefined) {
+        playPromise.then(() => {
+          if (autoplayNotice) autoplayNotice.style.display = "none";
+          if (replayBtn) replayBtn.classList.remove("btn-replay-pulse");
+        }).catch((err) => {
+          console.log("Auto-play prevented by browser policy:", err);
+          if (autoplayNotice) autoplayNotice.style.display = "block";
+          if (replayBtn) replayBtn.classList.add("btn-replay-pulse");
+        });
+      }
+      replayBtn.disabled = false;
+    }
+
+    // Event Listeners
+    recordBtn.addEventListener("click", () => {
+      unlockAudioPlayback();
+      startRecording();
+    });
+    stopBtn.addEventListener("click", stopRecording);
+    clearBtn.addEventListener("click", () => {
+      viOutput.className = "output-box empty";
+      viOutput.innerText = "Đang chờ âm thanh tiếng Việt...";
+      hmOutput.className = "output-box empty";
+      hmOutput.innerText = "Kết quả dịch sẽ xuất hiện tại đây...";
+      latencyDisplay.innerText = "-- ms";
+      replayBtn.disabled = true;
+      if (replayBtn) replayBtn.classList.remove("btn-replay-pulse");
+      if (autoplayNotice) autoplayNotice.style.display = "none";
+      if (viTextInput) viTextInput.value = "";
+      if (nativeAudioPlayer) nativeAudioPlayer.src = "";
+      if (audioFileInput) audioFileInput.value = "";
+      if (selectedFileName) selectedFileName.innerText = "Chưa chọn tệp";
+      if (uploadTranslateBtn) uploadTranslateBtn.disabled = true;
+      if (lastAudioBlobUrl) {
+        URL.revokeObjectURL(lastAudioBlobUrl);
+        lastAudioBlobUrl = null;
+      }
+    });
+    replayBtn.addEventListener("click", () => {
+      unlockAudioPlayback();
+      if (autoplayNotice) autoplayNotice.style.display = "none";
+      replayBtn.classList.remove("btn-replay-pulse");
+      if (lastAudioBlobUrl) {
+        audioPlayer.currentTime = 0;
+        audioPlayer.play().catch(e => console.error("Replay error:", e));
+        if (nativeAudioPlayer) {
+          nativeAudioPlayer.currentTime = 0;
+          nativeAudioPlayer.play().catch(() => {});
+        }
+      }
+    });
+
+    // File Upload & Translation Logic
+    const audioFileInput = document.getElementById("audioFileInput");
+    const selectFileBtn = document.getElementById("selectFileBtn");
+    const selectedFileName = document.getElementById("selectedFileName");
+    const uploadTranslateBtn = document.getElementById("uploadTranslateBtn");
+
+    if (selectFileBtn && audioFileInput) {
+      selectFileBtn.addEventListener("click", () => {
+        unlockAudioPlayback();
+        audioFileInput.click();
+      });
+      audioFileInput.addEventListener("change", (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (file) {
+          selectedFileName.innerText = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+          uploadTranslateBtn.disabled = false;
+        } else {
+          selectedFileName.innerText = "Chưa chọn tệp";
+          uploadTranslateBtn.disabled = true;
+        }
+      });
+    }
+
+    if (uploadTranslateBtn && audioFileInput) {
+      uploadTranslateBtn.addEventListener("click", async () => {
+        unlockAudioPlayback();
+        const file = audioFileInput.files && audioFileInput.files[0];
+        if (!file) return;
+
+        statusTag.className = "tag status-recording";
+        statusTag.innerText = "Đang dịch tệp / Translating...";
+        uploadTranslateBtn.disabled = true;
+        const t0 = performance.now();
+
+        try {
+          const formData = new FormData();
+          formData.append("file", file);
+
+          const response = await fetch((document.getElementById("serverUrlInput") && document.getElementById("serverUrlInput").value.trim().replace(/\/+$/, "") || "") + "/api/v1/s2s", {
+            method: "POST",
+            body: formData
+          });
+
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+          }
+
+          const tTotal = Math.round(performance.now() - t0);
+          latencyDisplay.innerText = `${tTotal} ms`;
+
+          const rawVi = response.headers.get("X-Vi-Text") || "";
+          const viText = decodeURIComponent(rawVi);
+          const rawHmong = response.headers.get("X-Hmong-Text") || "";
+          const hmongText = decodeURIComponent(rawHmong);
+
+          if (viText) {
+            viOutput.className = "output-box";
+            viOutput.innerText = viText;
+          }
+          if (hmongText) {
+            hmOutput.className = "output-box";
+            hmOutput.innerText = hmongText;
+          }
+
+          const blob = await response.blob();
+          playSynthesizedAudio(blob);
+
+          statusTag.className = "tag status-ready";
+          statusTag.innerText = "Dịch thành công / Completed";
+        } catch (err) {
+          console.error("S2S File Translation error:", err);
+          alert(`Lỗi dịch tệp âm thanh: ${err.message}`);
+          statusTag.className = "tag status-ready";
+          statusTag.innerText = "Lỗi xử lý / Error";
+        } finally {
+          uploadTranslateBtn.disabled = false;
+        }
+      });
+    }
+
+    // Direct Vietnamese Text Translation & Synthesis
+    async function triggerTextTranslation() {
+      unlockAudioPlayback();
+      const text = viTextInput ? viTextInput.value.trim() : "";
+      if (!text) {
+        if (viTextInput) viTextInput.focus();
+        return;
+      }
+
+      statusTag.className = "tag status-recording";
+      statusTag.innerText = "Đang dịch văn bản / Translating...";
+      if (translateTextBtn) translateTextBtn.disabled = true;
+      const t0 = performance.now();
+
+      try {
+        const response = await fetch((document.getElementById("serverUrlInput") && document.getElementById("serverUrlInput").value.trim().replace(/\/+$/, "") || "") + "/api/v1/t2s", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: text })
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+        }
+
+        const tTotal = Math.round(performance.now() - t0);
+        latencyDisplay.innerText = `${tTotal} ms`;
+
+        const rawVi = response.headers.get("X-Vi-Text") || "";
+        const viText = decodeURIComponent(rawVi) || text;
+        const rawHmong = response.headers.get("X-Hmong-Text") || "";
+        const hmongText = decodeURIComponent(rawHmong);
+
+        viOutput.className = "output-box";
+        viOutput.innerText = viText;
+        if (hmongText) {
+          hmOutput.className = "output-box";
+          hmOutput.innerText = hmongText;
+        }
+
+        const blob = await response.blob();
+        playSynthesizedAudio(blob);
+
+        statusTag.className = "tag status-ready";
+        statusTag.innerText = "Dịch thành công / Completed";
+      } catch (err) {
+        console.error("Text Translation error:", err);
+        alert(`Lỗi dịch văn bản: ${err.message}`);
+        statusTag.className = "tag status-ready";
+        statusTag.innerText = "Lỗi xử lý / Error";
+      } finally {
+        if (translateTextBtn) translateTextBtn.disabled = false;
+      }
+    }
+
+    if (translateTextBtn) {
+      translateTextBtn.addEventListener("click", triggerTextTranslation);
+    }
+    if (clearTextBtn && viTextInput) {
+      clearTextBtn.addEventListener("click", () => {
+        viTextInput.value = "";
+        viTextInput.focus();
+      });
+    }
+    if (viTextInput) {
+      viTextInput.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+          e.preventDefault();
+          triggerTextTranslation();
+        }
+      });
+    }
+
+    // Sample Sentence & Chip Triggers
+    document.querySelectorAll(".btn-sample-chip, .btn-sample").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        unlockAudioPlayback();
+        const sampleText = btn.getAttribute("data-text");
+        if (sampleText) {
+          if (viTextInput) viTextInput.value = sampleText;
+          triggerTextTranslation();
+        }
+      });
+    });
+  </script>
+</body>
+</html>

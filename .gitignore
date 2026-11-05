@@ -1,0 +1,26 @@
+# Environments
+.venv/
+.env/
+env/
+venv/
+ENV/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Temporary & cache files
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Antigravity agents working state
+.agents/teamwork/
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db

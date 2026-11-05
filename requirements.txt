@@ -1,0 +1,48 @@
+# ==============================================================================
+# Speech-to-Speech Translation (Vietnamese -> Hmong Daw RPA)
+# Production Dependencies for PyTorch 2.2+, CUDA 12.1, Transformers 4.40+
+# ==============================================================================
+
+# Core Deep Learning Framework & Acceleration
+torch>=2.2.0
+torchaudio>=2.2.0
+accelerate>=0.29.3
+peft>=0.10.0
+
+# NLP, Tokenization & Machine Translation
+transformers>=4.40.0
+datasets>=2.19.0
+tokenizers>=0.19.1
+sentencepiece>=0.2.0
+sacremoses>=0.1.1
+
+# Speech, Audio Feature Extraction & Synthesis
+librosa>=0.10.1
+soundfile>=0.12.1
+scipy>=1.12.0
+pyworld>=0.3.4
+phonemizer>=3.2.1
+
+# Web Server, Asynchronous API & WebSocket Streaming
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+websockets>=12.0
+python-multipart>=0.0.9
+aiofiles>=23.2.1
+httpx>=0.27.0
+
+# Schema Validation, Configuration & Serialization
+pydantic>=2.0.0
+pydantic-settings>=2.2.1
+pyyaml>=6.0.1
+
+# Scientific Evaluation & Academic Benchmarking
+jiwer>=3.0.3
+sacrebleu>=2.4.1
+tabulate>=0.9.0
+
+# Numerical Computing, Data Processing & Visualizations
+numpy>=1.26.0,<2.0.0
+pandas>=2.2.0
+matplotlib>=3.8.0
+tqdm>=4.66.0
