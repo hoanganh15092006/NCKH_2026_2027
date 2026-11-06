@@ -1662,6 +1662,7 @@ INDEX_HTML = """<!DOCTYPE html>
 
           const response = await fetch("/api/v1/s2s", {
             method: "POST",
+            headers: { "ngrok-skip-browser-warning": "true" },
             body: formData
           });
 
@@ -1868,6 +1869,7 @@ INDEX_HTML = """<!DOCTYPE html>
 
           const response = await fetch("/api/v1/s2s", {
             method: "POST",
+            headers: { "ngrok-skip-browser-warning": "true" },
             body: formData
           });
 
@@ -1925,7 +1927,7 @@ INDEX_HTML = """<!DOCTYPE html>
       try {
         const response = await fetch("/api/v1/t2s", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
           body: JSON.stringify({ text: text })
         });
 

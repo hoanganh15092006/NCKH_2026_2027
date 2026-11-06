@@ -836,6 +836,7 @@
 
           const response = await fetch((document.getElementById("serverUrlInput") && document.getElementById("serverUrlInput").value.trim().replace(/\/+$/, "") || "") + "/api/v1/s2s", {
             method: "POST",
+            headers: { "ngrok-skip-browser-warning": "true" },
             body: formData
           });
 
@@ -1042,6 +1043,7 @@
 
           const response = await fetch((document.getElementById("serverUrlInput") && document.getElementById("serverUrlInput").value.trim().replace(/\/+$/, "") || "") + "/api/v1/s2s", {
             method: "POST",
+            headers: { "ngrok-skip-browser-warning": "true" },
             body: formData
           });
 
@@ -1099,7 +1101,7 @@
       try {
         const response = await fetch((document.getElementById("serverUrlInput") && document.getElementById("serverUrlInput").value.trim().replace(/\/+$/, "") || "") + "/api/v1/t2s", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
           body: JSON.stringify({ text: text })
         });
 
