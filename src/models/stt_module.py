@@ -572,12 +572,18 @@ class VietnameseSTT(nn.Module):
         # Concatenate overlap buffer to avoid boundary distortion
         combined = np.concatenate([buf, chunk]) if len(buf) > 0 else chunk
         rms = float(np.sqrt(np.mean(chunk ** 2) + 1e-12))
+        comb_rms = float(np.sqrt(np.mean(combined ** 2) + 1e-12))
+
+        # RMS normalization to -20 dBFS for reliable acoustic recognition on quiet microphones
+        target_rms = 10.0 ** (-20.0 / 20.0)
+        gain = min(target_rms / max(comb_rms, 1e-6), 25.0)
+        combined_norm = np.clip(combined * gain, -0.99, 0.99).astype(np.float32)
 
         # 1. Primary HuggingFace Wav2Vec2 CTC streaming inference
-        if self.hf_model is not None and self.hf_processor is not None and len(combined) >= 512:
+        if self.hf_model is not None and self.hf_processor is not None and len(combined_norm) >= 512:
             try:
                 inputs = self.hf_processor(
-                    combined,
+                    combined_norm,
                     sampling_rate=self.sample_rate,
                     return_tensors="pt"
                 )
@@ -599,7 +605,7 @@ class VietnameseSTT(nn.Module):
                 pass
 
         # 2. Stateful Native Conformer-CTC Fallback
-        if rms > 0.05:
+        if comb_rms > 0.005:
             if len(combined) < 512:
                 pad_len = 512 - len(combined)
                 combined_tensor = torch.from_numpy(np.pad(combined, (0, pad_len))).float().unsqueeze(0).to(self.device)

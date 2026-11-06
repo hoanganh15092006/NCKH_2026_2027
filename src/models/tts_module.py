@@ -465,9 +465,13 @@ class HmongVITS(nn.Module):
         length_scale: float = 1.0
     ) -> torch.Tensor:
         """Predicts phone durations and scales by duration regulator."""
-        raw_dur = self.duration_predictor(h_text).squeeze(1).squeeze(0)  # [T_text]
-        # Frame duration minimum bound = 1 frame
-        dur = torch.clamp(torch.round((raw_dur + 3.0) * length_scale), min=1.0)
+        raw_dur = self.duration_predictor(h_text)  # [B, 1, T_text]
+        if raw_dur.dim() >= 2:
+            raw_dur = raw_dur.squeeze(1).squeeze(0)
+        if raw_dur.dim() == 0:
+            raw_dur = raw_dur.unsqueeze(0)
+        # Base frames = 6.0 allows natural articulation of RPA phonemes and tones (~96ms base per sub-phone)
+        dur = torch.clamp(torch.round((raw_dur * 2.0 + 6.0) * length_scale), min=2.0)
         return dur.long()
 
     def length_regulate(
@@ -608,7 +612,7 @@ class HmongVITS(nn.Module):
             audio_out[-taper_len:] *= np.linspace(1.0, 0.0, taper_len, dtype=np.float32)
             audio_out = audio_out - np.mean(audio_out)
 
-        # Stage 2: Target RMS loudness scaling (-18.0 dBFS ~ 0.12589)
+        # Stage 2: Target RMS loudness scaling (-15.0 dBFS ~ 0.1778)
         target_dbfs = -18.0
         target_rms = 10.0 ** (target_dbfs / 20.0)
         current_rms = float(np.sqrt(np.mean(audio_out ** 2) + 1e-7))

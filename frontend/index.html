@@ -492,13 +492,17 @@
   <script>
     // State
     let isRecording = false;
-    let audioContext = null;
+    let micAudioContext = null;
+    let playbackAudioContext = null;
+    let currentSourceNode = null;
     let mediaStream = null;
     let processorNode = null;
     let analyserNode = null;
+    let muteGainNode = null;
     let websocket = null;
     let canvasAnimationId = null;
     let lastAudioBlobUrl = null;
+    let recordedPcmChunks = []; // Int16Array chunks for full-utterance WAV upload
     let audioPlayer = new Audio();
 
     // DOM Elements
@@ -519,15 +523,64 @@
     const nativeAudioPlayer = document.getElementById("nativeAudioPlayer");
 
     // Audio Autoplay Policy Mitigation & User Gesture Unlocker
+    // Always call this synchronously inside any click / key event handler
     function unlockAudioPlayback() {
-      if (audioContext && audioContext.state === "suspended") {
-        audioContext.resume().catch(() => {});
+      try {
+        if (!playbackAudioContext) {
+          const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+          playbackAudioContext = new AudioCtxClass();
+        }
+        if (playbackAudioContext.state === "suspended") {
+          playbackAudioContext.resume().catch(() => {});
+        }
+      } catch (e) {
+        console.warn("AudioContext unlock warning:", e);
       }
-      if (audioPlayer) {
-        audioPlayer.play().then(() => {
-          audioPlayer.pause();
-        }).catch(() => {});
+    }
+
+    // Helper: WAV Encoder for recorded 16kHz mono 16-bit PCM samples
+    function encodeWavBlob(int16Chunks) {
+      let totalSamples = 0;
+      for (let i = 0; i < int16Chunks.length; i++) {
+        totalSamples += int16Chunks[i].length;
       }
+      if (totalSamples === 0) return null;
+
+      const buffer = new ArrayBuffer(44 + totalSamples * 2);
+      const view = new DataView(buffer);
+
+      function writeString(offset, str) {
+        for (let j = 0; j < str.length; j++) {
+          view.setUint8(offset + j, str.charCodeAt(j));
+        }
+      }
+
+      // RIFF identifier
+      writeString(0, "RIFF");
+      view.setUint32(4, 36 + totalSamples * 2, true);
+      writeString(8, "WAVE");
+      writeString(12, "fmt ");
+      view.setUint32(16, 16, true);          // Subchunk1Size (16 for PCM)
+      view.setUint16(20, 1, true);           // AudioFormat (1 = PCM linear)
+      view.setUint16(22, 1, true);           // NumChannels (1 = Mono)
+      view.setUint32(24, 16000, true);       // SampleRate (16,000 Hz)
+      view.setUint32(28, 32000, true);       // ByteRate (16000 * 1 * 2 = 32000)
+      view.setUint16(32, 2, true);           // BlockAlign (1 * 2 = 2)
+      view.setUint16(34, 16, true);          // BitsPerSample (16 bits)
+      writeString(36, "data");
+      view.setUint32(40, totalSamples * 2, true);
+
+      // Write 16-bit samples
+      let offset = 44;
+      for (let i = 0; i < int16Chunks.length; i++) {
+        const chunk = int16Chunks[i];
+        for (let j = 0; j < chunk.length; j++) {
+          view.setInt16(offset, chunk[j], true);
+          offset += 2;
+        }
+      }
+
+      return new Blob([buffer], { type: "audio/wav" });
     }
 
     // Resize canvas
@@ -590,6 +643,7 @@
     }
 
     // Audio Resampling & Conversion: Float32 -> 16-bit PCM at 16kHz
+    // Uses Linear Interpolation to eliminate point decimation aliasing distortion
     function downsampleTo16k(inputBuffer, inputSampleRate) {
       if (inputSampleRate === 16000) {
         const pcm16 = new Int16Array(inputBuffer.length);
@@ -597,22 +651,29 @@
           const s = Math.max(-1, Math.min(1, inputBuffer[i]));
           pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
         }
-        return pcm16.buffer;
+        return pcm16;
       }
       const ratio = inputSampleRate / 16000;
       const newLength = Math.round(inputBuffer.length / ratio);
       const pcm16 = new Int16Array(newLength);
       for (let i = 0; i < newLength; i++) {
-        const idx = Math.floor(i * ratio);
-        const s = Math.max(-1, Math.min(1, inputBuffer[idx]));
+        const pos = i * ratio;
+        const idx = Math.floor(pos);
+        const frac = pos - idx;
+        const nextIdx = Math.min(inputBuffer.length - 1, idx + 1);
+        const interpolated = inputBuffer[idx] * (1 - frac) + inputBuffer[nextIdx] * frac;
+        const s = Math.max(-1, Math.min(1, interpolated));
         pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
       }
-      return pcm16.buffer;
+      return pcm16;
     }
 
     // Start Recording & Streaming
     async function startRecording() {
       try {
+        unlockAudioPlayback();
+        recordedPcmChunks = [];
+
         let customServer = (document.getElementById('serverUrlInput') && document.getElementById('serverUrlInput').value || '').trim();
         let wsUrl = '';
         if (customServer) {
@@ -627,140 +688,270 @@
           wsUrl = `${proto}//${window.location.host}/ws/s2s_live?events=true&format=wav`;
         }
 
-        websocket = new WebSocket(wsUrl);
-        websocket.binaryType = "arraybuffer";
+        try {
+          websocket = new WebSocket(wsUrl);
+          websocket.binaryType = "arraybuffer";
 
-        websocket.onopen = () => {
-          statusTag.className = "tag status-recording";
-          statusTag.innerText = "Đang thu âm / Recording...";
-        };
+          websocket.onopen = () => {
+            statusTag.className = "tag status-recording";
+            statusTag.innerText = "Đang thu âm / Recording...";
+          };
 
-        websocket.onmessage = async (event) => {
-          if (typeof event.data === "string") {
-            const data = JSON.parse(event.data);
-            if (data.type === "result") {
-              if (data.vi_text) {
-                viOutput.className = "output-box";
-                viOutput.innerText = data.vi_text;
+          websocket.onmessage = async (event) => {
+            if (typeof event.data === "string") {
+              const data = JSON.parse(event.data);
+              if (data.type === "result") {
+                if (data.vi_text) {
+                  viOutput.className = "output-box";
+                  viOutput.innerText = data.vi_text;
+                }
+                if (data.hmong_text) {
+                  hmOutput.className = "output-box";
+                  hmOutput.innerText = data.hmong_text;
+                }
+                if (data.latency_ms) {
+                  latencyDisplay.innerText = `${data.latency_ms} ms`;
+                }
               }
-              if (data.hmong_text) {
-                hmOutput.className = "output-box";
-                hmOutput.innerText = data.hmong_text;
-              }
-              if (data.latency_ms) {
-                latencyDisplay.innerText = `${data.latency_ms} ms`;
-              }
-              // Note: Audio playback is handled exclusively by the incoming binary ArrayBuffer frame
-              // to eliminate double-playback and audio echoing race conditions.
+            } else if (event.data instanceof ArrayBuffer) {
+              const blob = new Blob([event.data], { type: "audio/wav" });
+              playSynthesizedAudio(blob);
             }
-          } else if (event.data instanceof ArrayBuffer) {
-            const blob = new Blob([event.data], { type: "audio/wav" });
-            playSynthesizedAudio(blob);
-          }
-        };
+          };
 
-        websocket.onerror = (err) => {
-          console.error("WebSocket error:", err);
-        };
+          websocket.onerror = (err) => {
+            console.warn("WebSocket stream warning:", err);
+          };
+        } catch (wsErr) {
+          console.warn("WebSocket connection bypassed, will use HTTP S2S:", wsErr);
+        }
 
-        websocket.onclose = () => {
-          if (isRecording) stopRecording();
-        };
-
-        // Capture Mic
+        // Capture Mic with browser noise suppression & auto gain
         mediaStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: 1,
             sampleRate: 16000,
             echoCancellation: true,
-            noiseSuppression: true
+            noiseSuppression: true,
+            autoGainControl: true
           }
         });
 
-        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-        const source = audioContext.createMediaStreamSource(mediaStream);
-        analyserNode = audioContext.createAnalyser();
+        const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+        micAudioContext = new AudioCtxClass();
+        if (micAudioContext.state === "suspended") {
+          await micAudioContext.resume();
+        }
+
+        const source = micAudioContext.createMediaStreamSource(mediaStream);
+        analyserNode = micAudioContext.createAnalyser();
         analyserNode.fftSize = 512;
         source.connect(analyserNode);
 
-        // 300ms chunk processing (approx 4096 or 4800 samples)
-        processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+        // 300ms chunk processing (approx 4096 samples)
+        processorNode = micAudioContext.createScriptProcessor(4096, 1, 1);
         source.connect(processorNode);
-        processorNode.connect(audioContext.destination);
+
+        // Acoustic Feedback Elimination: Connect through a muted gain node (gain=0)
+        // This keeps the processor node processing samples without blasting mic audio to speakers!
+        muteGainNode = micAudioContext.createGain();
+        muteGainNode.gain.value = 0.0;
+        processorNode.connect(muteGainNode);
+        muteGainNode.connect(micAudioContext.destination);
 
         processorNode.onaudioprocess = (e) => {
-          if (!isRecording || !websocket || websocket.readyState !== WebSocket.OPEN) return;
+          if (!isRecording) return;
           const inputData = e.inputBuffer.getChannelData(0);
-          const pcmChunk = downsampleTo16k(inputData, audioContext.sampleRate);
-          websocket.send(pcmChunk);
+          const pcm16 = downsampleTo16k(inputData, micAudioContext.sampleRate);
+          recordedPcmChunks.push(pcm16);
+
+          if (websocket && websocket.readyState === WebSocket.OPEN) {
+            websocket.send(pcm16.buffer);
+          }
         };
 
         isRecording = true;
         recordBtn.disabled = true;
         stopBtn.disabled = false;
+        statusTag.className = "tag status-recording";
+        statusTag.innerText = "Đang thu âm / Recording...";
+
         cancelAnimationFrame(canvasAnimationId);
         drawActiveWaveform();
 
       } catch (err) {
         console.error("Failed to access microphone:", err);
-        alert("Không thể truy cập microphone. Vui lòng cấp quyền truy cập trong trình duyệt.");
+        alert("Không thể truy cập microphone. Vui lòng cấp quyền truy cập microphone trong trình duyệt.");
         stopRecording();
       }
     }
 
-    // Stop Recording
-    function stopRecording() {
+    // Stop Recording & Trigger High-Accuracy S2S
+    async function stopRecording() {
+      if (!isRecording) return;
       isRecording = false;
       recordBtn.disabled = false;
       stopBtn.disabled = true;
-      statusTag.className = "tag status-ready";
-      statusTag.innerText = "Sẵn sàng / Ready";
+
+      statusTag.className = "tag status-recording";
+      statusTag.innerText = "Đang xử lý âm thanh / Processing...";
 
       if (processorNode) {
         processorNode.disconnect();
         processorNode = null;
       }
+      if (muteGainNode) {
+        muteGainNode.disconnect();
+        muteGainNode = null;
+      }
       if (mediaStream) {
         mediaStream.getTracks().forEach(track => track.stop());
         mediaStream = null;
       }
-      if (audioContext && audioContext.state !== "closed") {
-        audioContext.close();
-        audioContext = null;
+      if (micAudioContext && micAudioContext.state !== "closed") {
+        micAudioContext.close().catch(() => {});
+        micAudioContext = null;
       }
+
       if (websocket && websocket.readyState === WebSocket.OPEN) {
-        websocket.send(JSON.stringify({ command: "flush" }));
+        try { websocket.send(JSON.stringify({ command: "flush" })); } catch (e) {}
         setTimeout(() => {
-          if (websocket) websocket.close();
-        }, 500);
+          if (websocket) { websocket.close(); websocket = null; }
+        }, 300);
       }
 
       cancelAnimationFrame(canvasAnimationId);
       drawIdleWaveform();
+
+      // Encode full speech utterance to 16kHz mono WAV and send to /api/v1/s2s
+      const chunksToProcess = recordedPcmChunks.slice();
+      recordedPcmChunks = [];
+
+      const wavBlob = encodeWavBlob(chunksToProcess);
+      if (wavBlob && wavBlob.size > 2000) {
+        const t0 = performance.now();
+        try {
+          const formData = new FormData();
+          formData.append("file", wavBlob, "microphone_speech.wav");
+
+          const response = await fetch((document.getElementById("serverUrlInput") && document.getElementById("serverUrlInput").value.trim().replace(/\/+$/, "") || "") + "/api/v1/s2s", {
+            method: "POST",
+            body: formData
+          });
+
+          if (response.ok) {
+            const tTotal = Math.round(performance.now() - t0);
+            latencyDisplay.innerText = `${tTotal} ms`;
+
+            const rawVi = response.headers.get("X-Vi-Text") || "";
+            const viText = decodeURIComponent(rawVi);
+            const rawHmong = response.headers.get("X-Hmong-Text") || "";
+            const hmongText = decodeURIComponent(rawHmong);
+
+            if (viText) {
+              viOutput.className = "output-box";
+              viOutput.innerText = viText;
+            }
+            if (hmongText) {
+              hmOutput.className = "output-box";
+              hmOutput.innerText = hmongText;
+            }
+
+            const audioBlob = await response.blob();
+            playSynthesizedAudio(audioBlob);
+
+            statusTag.className = "tag status-ready";
+            statusTag.innerText = "Dịch thành công / Completed";
+            return;
+          }
+        } catch (fetchErr) {
+          console.warn("Full-utterance S2S upload exception:", fetchErr);
+        }
+      }
+
+      statusTag.className = "tag status-ready";
+      statusTag.innerText = "Sẵn sàng / Ready";
     }
 
-    // Play Synthesized Audio with Autoplay Mitigation
-    function playSynthesizedAudio(blob) {
+    // Play Synthesized Audio with Web Audio API (Immune to browser autoplay policies)
+    async function playSynthesizedAudio(inputData) {
+      let blob = null;
+      let arrayBuffer = null;
+
+      if (inputData instanceof Blob) {
+        blob = inputData;
+        try {
+          arrayBuffer = await inputData.arrayBuffer();
+        } catch (e) {
+          console.error("Error reading blob as arrayBuffer:", e);
+        }
+      } else if (inputData instanceof ArrayBuffer) {
+        arrayBuffer = inputData;
+        blob = new Blob([inputData], { type: "audio/wav" });
+      }
+
+      if (!blob && !arrayBuffer) return;
+
       if (lastAudioBlobUrl) {
         URL.revokeObjectURL(lastAudioBlobUrl);
       }
-      lastAudioBlobUrl = URL.createObjectURL(blob);
-      audioPlayer.src = lastAudioBlobUrl;
-      if (nativeAudioPlayer) {
-        nativeAudioPlayer.src = lastAudioBlobUrl;
+      if (blob) {
+        lastAudioBlobUrl = URL.createObjectURL(blob);
+        if (nativeAudioPlayer) {
+          nativeAudioPlayer.src = lastAudioBlobUrl;
+          nativeAudioPlayer.load();
+        }
       }
-      const playPromise = audioPlayer.play();
-      if (playPromise !== undefined) {
-        playPromise.then(() => {
+
+      replayBtn.disabled = false;
+
+      // 1. Primary Playback: Web Audio API AudioBufferSourceNode
+      if (arrayBuffer) {
+        try {
+          unlockAudioPlayback();
+          const ctx = playbackAudioContext;
+          if (ctx) {
+            if (ctx.state === "suspended") {
+              await ctx.resume();
+            }
+
+            // Slice arrayBuffer to avoid neutering original buffer
+            const decodedBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+
+            if (currentSourceNode) {
+              try { currentSourceNode.stop(); } catch (e) {}
+            }
+
+            currentSourceNode = ctx.createBufferSource();
+            currentSourceNode.buffer = decodedBuffer;
+            currentSourceNode.connect(ctx.destination);
+
+            replayBtn.classList.add("btn-replay-pulse");
+            currentSourceNode.onended = () => {
+              replayBtn.classList.remove("btn-replay-pulse");
+            };
+
+            currentSourceNode.start(0);
+            if (autoplayNotice) autoplayNotice.style.display = "none";
+            return; // Successfully played via Web Audio API!
+          }
+        } catch (decodeErr) {
+          console.warn("Web Audio API decode error, falling back to HTML5 audio:", decodeErr);
+        }
+      }
+
+      // 2. Secondary Playback: Native HTML5 Audio
+      if (nativeAudioPlayer) {
+        nativeAudioPlayer.currentTime = 0;
+        nativeAudioPlayer.play().then(() => {
           if (autoplayNotice) autoplayNotice.style.display = "none";
-          if (replayBtn) replayBtn.classList.remove("btn-replay-pulse");
+          replayBtn.classList.add("btn-replay-pulse");
         }).catch((err) => {
-          console.log("Auto-play prevented by browser policy:", err);
+          console.warn("Auto-play prevented by browser policy:", err);
           if (autoplayNotice) autoplayNotice.style.display = "block";
-          if (replayBtn) replayBtn.classList.add("btn-replay-pulse");
+          replayBtn.classList.add("btn-replay-pulse");
         });
       }
-      replayBtn.disabled = false;
     }
 
     // Event Listeners
@@ -768,18 +959,29 @@
       unlockAudioPlayback();
       startRecording();
     });
-    stopBtn.addEventListener("click", stopRecording);
+
+    stopBtn.addEventListener("click", () => {
+      unlockAudioPlayback();
+      stopRecording();
+    });
+
     clearBtn.addEventListener("click", () => {
+      if (currentSourceNode) {
+        try { currentSourceNode.stop(); } catch (e) {}
+      }
       viOutput.className = "output-box empty";
       viOutput.innerText = "Đang chờ âm thanh tiếng Việt...";
       hmOutput.className = "output-box empty";
       hmOutput.innerText = "Kết quả dịch sẽ xuất hiện tại đây...";
       latencyDisplay.innerText = "-- ms";
       replayBtn.disabled = true;
-      if (replayBtn) replayBtn.classList.remove("btn-replay-pulse");
+      replayBtn.classList.remove("btn-replay-pulse");
       if (autoplayNotice) autoplayNotice.style.display = "none";
       if (viTextInput) viTextInput.value = "";
-      if (nativeAudioPlayer) nativeAudioPlayer.src = "";
+      if (nativeAudioPlayer) {
+        nativeAudioPlayer.pause();
+        nativeAudioPlayer.src = "";
+      }
       if (audioFileInput) audioFileInput.value = "";
       if (selectedFileName) selectedFileName.innerText = "Chưa chọn tệp";
       if (uploadTranslateBtn) uploadTranslateBtn.disabled = true;
@@ -788,17 +990,15 @@
         lastAudioBlobUrl = null;
       }
     });
+
     replayBtn.addEventListener("click", () => {
       unlockAudioPlayback();
       if (autoplayNotice) autoplayNotice.style.display = "none";
       replayBtn.classList.remove("btn-replay-pulse");
-      if (lastAudioBlobUrl) {
-        audioPlayer.currentTime = 0;
-        audioPlayer.play().catch(e => console.error("Replay error:", e));
-        if (nativeAudioPlayer) {
-          nativeAudioPlayer.currentTime = 0;
-          nativeAudioPlayer.play().catch(() => {});
-        }
+
+      if (nativeAudioPlayer && lastAudioBlobUrl) {
+        nativeAudioPlayer.currentTime = 0;
+        nativeAudioPlayer.play().catch(e => console.error("Replay error:", e));
       }
     });
 
@@ -938,7 +1138,10 @@
     }
 
     if (translateTextBtn) {
-      translateTextBtn.addEventListener("click", triggerTextTranslation);
+      translateTextBtn.addEventListener("click", () => {
+        unlockAudioPlayback();
+        triggerTextTranslation();
+      });
     }
     if (clearTextBtn && viTextInput) {
       clearTextBtn.addEventListener("click", () => {
@@ -948,8 +1151,9 @@
     }
     if (viTextInput) {
       viTextInput.addEventListener("keydown", (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
+          unlockAudioPlayback();
           triggerTextTranslation();
         }
       });
