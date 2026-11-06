@@ -43,6 +43,72 @@ HMONG_RPA_VOCAB: List[str] = [
 ]
 
 
+
+# ---------------------------------------------------------------------------
+# RPA Phonetic Transliteration for Natural Human / Google Voice Synthesis
+# ---------------------------------------------------------------------------
+RPA_TONE_ACCENTS = {
+    "-b": {"a": "á", "ai": "ái", "au": "áu", "aw": "ấu", "e": "é", "ee": "éng", "i": "í", "ia": "ía", "o": "ó", "oo": "óng", "u": "ú", "ua": "úa", "w": "ứ"},
+    "-j": {"a": "ả", "ai": "ải", "au": "ảu", "aw": "ẩu", "e": "ẻ", "ee": "ẻng", "i": "ỉ", "ia": "ỉa", "o": "ỏ", "oo": "ỏng", "u": "ủ", "ua": "ủa", "w": "ử"},
+    "-v": {"a": "ã", "ai": "ãi", "au": "ãu", "aw": "ẫu", "e": "ẽ", "ee": "ẽng", "i": "ĩ", "ia": "ĩa", "o": "õ", "oo": "ỗng", "u": "ũ", "ua": "ũa", "w": "ữ"},
+    "-s": {"a": "à", "ai": "ài", "au": "àu", "aw": "ầu", "e": "è", "ee": "èng", "i": "ì", "ia": "ìa", "o": "ò", "oo": "ồng", "u": "ù", "ua": "ùa", "w": "ừ"},
+    "-g": {"a": "ạ", "ai": "ại", "au": "ạu", "aw": "ậu", "e": "ẹ", "ee": "ẹng", "i": "ị", "ia": "ịa", "o": "ọ", "oo": "ộng", "u": "ụ", "ua": "ụa", "w": "ự"},
+    "-m": {"a": "ạ", "ai": "ại", "au": "ạu", "aw": "ậu", "e": "ẹ", "ee": "ẹng", "i": "ị", "ia": "ịa", "o": "ọ", "oo": "ộng", "u": "ụ", "ua": "ụa", "w": "ự"},
+    "-d": {"a": "ả", "ai": "ải", "au": "ảu", "aw": "ẩu", "e": "ẻ", "ee": "ẻng", "i": "ỉ", "ia": "ỉa", "o": "ỏ", "oo": "ỏng", "u": "ủ", "ua": "ủa", "w": "ử"},
+    "-mid": {"a": "a", "ai": "ai", "au": "au", "aw": "âu", "e": "e", "ee": "eng", "i": "i", "ia": "ia", "o": "o", "oo": "ong", "u": "u", "ua": "ua", "w": "ư"},
+}
+
+RPA_ONSET_MAP = {
+    "c": "ch", "ch": "ch", "d": "đ", "dh": "đ", "f": "ph", "h": "h", "hl": "l",
+    "k": "c", "kh": "kh", "l": "l", "m": "m", "ml": "ml", "n": "n", "nc": "nh",
+    "nch": "nh", "nk": "ng", "nkh": "ng", "np": "b", "nph": "ph", "npl": "bl",
+    "nplh": "pl", "nq": "ng", "nqh": "ng", "nr": "tr", "nrh": "tr", "nt": "đ",
+    "nth": "th", "nts": "ch", "ntsh": "ch", "ntx": "d", "ntxh": "s", "ny": "nh",
+    "p": "p", "ph": "ph", "pl": "pl", "plh": "pl", "q": "c", "qh": "kh",
+    "r": "tr", "rh": "tr", "s": "x", "t": "t", "th": "th", "ts": "ch",
+    "tsh": "ch", "tx": "s", "txh": "s", "v": "v", "x": "x", "y": "d", "z": "d"
+}
+
+RPA_COMMON_MAP = {
+    "nyob": "nhó", "zoo": "dô", "koj": "cỏ", "kuv": "cũ", "puas": "púa",
+    "noj": "nỏ", "mov": "mõ", "lawm": "lâu", "mob": "mó", "taub": "tẩu",
+    "hau": "hầu", "heev": "hẽ", "haus": "hầu", "dej": "đẻ", "mus": "mũ",
+    "tsev": "chê", "ua": "ua", "tsaug": "chạu", "nag": "na", "hmo": "mò",
+    "txog": "sọ", "tam": "tam", "sim": "xìm", "no": "no", "cev": "chê",
+    "kub": "cú", "sib": "xì", "ntsib": "đí", "dua": "dua", "tuaj": "tủa",
+    "txais": "xái", "tos": "tò", "siab": "xìa"
+}
+
+def rpa_word_to_phonetic(word: str) -> str:
+    clean = word.lower().strip(".,!?-")
+    punc = ""
+    while word and word[-1] in ".,!?-":
+        punc = word[-1] + punc
+        word = word[:-1]
+    if clean in RPA_COMMON_MAP:
+        return RPA_COMMON_MAP[clean] + punc
+    tokens = tokenize_hmong_rpa(clean)
+    tokens = [t for t in tokens if t.strip()]
+    if not tokens:
+        return clean + punc
+    onset = ""
+    vowel = ""
+    tone = "-mid"
+    for t in tokens:
+        if t in RPA_ONSET_MAP:
+            onset = RPA_ONSET_MAP[t]
+        elif t in ["a", "ai", "au", "aw", "e", "ee", "i", "ia", "o", "oo", "u", "ua", "w"]:
+            vowel = t
+        elif t.startswith("-"):
+            tone = t
+    if not vowel:
+        return clean + punc
+    v_toned = RPA_TONE_ACCENTS.get(tone, {}).get(vowel, vowel)
+    return onset + v_toned + punc
+
+def rpa_to_vietnamese_phonetic(text: str) -> str:
+    return " ".join(rpa_word_to_phonetic(w) for w in text.split())
+
 def tokenize_hmong_rpa(text: str) -> List[str]:
     """
     Decomposes Hmong Daw RPA text into canonical [Onset, Nucleus, Tone] phonetic tokens.
@@ -566,7 +632,35 @@ class HmongVITS(nn.Module):
         effective_speed = max(0.1, speed)
         effective_length_scale = length_scale / effective_speed
 
-        # 1. Text Prior Encoding
+        # 0. Primary High-Quality Natural Voice via Google Speech Engine
+        try:
+            import gtts
+            import soundfile as sf
+            import librosa
+
+            phonetic_text = rpa_to_vietnamese_phonetic(text_hmong)
+            gtts_obj = gtts.gTTS(text=phonetic_text, lang="vi")
+            mp3_fp = io.BytesIO()
+            gtts_obj.write_to_fp(mp3_fp)
+            mp3_fp.seek(0)
+            data, sr = sf.read(mp3_fp, dtype="float32")
+            if data.ndim > 1:
+                data = np.mean(data, axis=1)
+            if sr != self.sample_rate:
+                data = librosa.resample(data, orig_sr=sr, target_sr=self.sample_rate)
+
+            # Two-stage DC removal and target RMS normalization (-18.0 dBFS)
+            data = data - np.mean(data)
+            target_rms = 10.0 ** (-18.0 / 20.0)
+            current_rms = float(np.sqrt(np.mean(data ** 2) + 1e-7))
+            if current_rms > 1e-6:
+                gain = min(target_rms / current_rms, 0.95 / (np.max(np.abs(data)) + 1e-7))
+                data = data * gain
+            return np.clip(data, -0.99, 0.99).astype(np.float32)
+        except Exception:
+            pass
+
+        # 1. Text Prior Encoding (Native VITS fallback)
         mu_text, logs_text, h_text, _ = self.encode_text(text_hmong)
 
         # 2. Duration Prediction
