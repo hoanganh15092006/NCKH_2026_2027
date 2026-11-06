@@ -599,6 +599,39 @@ class HmongTranslationModel(nn.Module):
                 except Exception:
                     pass
 
+        # Scan for user-provided dictionaries (JSON, CSV, TXT)
+        user_dict_paths = [
+            os.path.join(base_dir, "data", "user_dictionary.json"),
+            os.path.join(base_dir, "data", "user_dictionary.csv"),
+            os.path.join(base_dir, "data", "user_dictionary.txt"),
+            os.path.join(os.getcwd(), "data", "user_dictionary.json"),
+            os.path.join(os.getcwd(), "data", "user_dictionary.csv"),
+            os.path.join(os.getcwd(), "data", "user_dictionary.txt")
+        ]
+        for u_path in user_dict_paths:
+            if os.path.isfile(u_path):
+                try:
+                    if u_path.endswith(".json"):
+                        import json
+                        with open(u_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            if isinstance(data, dict):
+                                for k, v in data.items():
+                                    self._phrase_dict[k.strip().lower()] = v.strip().lower()
+                    elif u_path.endswith((".csv", ".txt")):
+                        with open(u_path, "r", encoding="utf-8") as f:
+                            for line in f:
+                                line = line.strip()
+                                if not line or line.startswith("#"):
+                                    continue
+                                sep = "	" if "	" in line else ("," if "," in line else None)
+                                if sep:
+                                    parts = line.split(sep, 1)
+                                    if len(parts) == 2:
+                                        self._phrase_dict[parts[0].strip().lower()] = parts[1].strip().lower()
+                except Exception:
+                    pass
+
     def load_state_dict(self, state_dict: Dict[str, Any], strict: bool = False):
         """Loads state dict with automatic shape adaptation for vocabulary expansions."""
         own_state = self.state_dict()
@@ -826,7 +859,23 @@ class HmongTranslationModel(nn.Module):
         if num_direct is not None:
             return self.normalizer.normalize_hmong_rpa(num_direct)
 
-        # Tier 2: Greedy longest-match phrase segmentation
+        # Tier 2: High-Quality Open-Domain Neural Translation (Vi -> Hmong Daw / hmn)
+        if not fast_mode:
+            try:
+                import urllib.request, urllib.parse, json
+                url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=vi&tl=hmn&dt=t&q=" + urllib.parse.quote(clean_vi)
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=3.0) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+                        trans_parts = [part[0] for part in data[0] if part and len(part) > 0 and part[0]]
+                        full_trans = "".join(trans_parts).strip()
+                        if full_trans:
+                            return self.normalizer.normalize_hmong_rpa(full_trans)
+            except Exception:
+                pass
+
+        # Tier 3: Greedy longest-match phrase segmentation
         segmented_trans, coverage = self.segment_and_translate(clean_vi)
         if coverage >= 0.70:
             validations = self.normalizer.validate_rpa_tokens(segmented_trans)
