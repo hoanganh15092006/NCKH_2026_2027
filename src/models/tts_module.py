@@ -483,6 +483,7 @@ class HmongVITS(nn.Module):
         self.vocab = vocab or HMONG_RPA_VOCAB
         self.token_to_id = {t: i for i, t in enumerate(self.vocab)}
         self.id_to_token = {i: t for i, t in enumerate(self.vocab)}
+        self._synth_cache: Dict[Tuple[str, float, float, float], np.ndarray] = {}
 
         # 1. RPA Text Encoder
         self.text_encoder = RPATextEncoder(
@@ -632,6 +633,10 @@ class HmongVITS(nn.Module):
         effective_speed = max(0.1, speed)
         effective_length_scale = length_scale / effective_speed
 
+        cache_key = (text_hmong.strip(), round(float(speed), 2), round(float(noise_scale), 2), round(float(length_scale), 2))
+        if hasattr(self, "_synth_cache") and cache_key in self._synth_cache:
+            return self._synth_cache[cache_key].copy()
+
         # 0. Primary High-Quality Natural Voice via Google Speech Engine
         try:
             import gtts
@@ -652,11 +657,17 @@ class HmongVITS(nn.Module):
             # Two-stage DC removal and target RMS normalization (-18.0 dBFS)
             data = data - np.mean(data)
             target_rms = 10.0 ** (-18.0 / 20.0)
-            current_rms = float(np.sqrt(np.mean(data ** 2) + 1e-7))
+            mean_sq = float(np.mean(data ** 2))
+            current_rms = float(np.sqrt(mean_sq)) if mean_sq > 0 else 0.0
             if current_rms > 1e-6:
-                gain = min(target_rms / current_rms, 0.95 / (np.max(np.abs(data)) + 1e-7))
+                gain = min(target_rms / current_rms, 0.95 / (np.max(np.abs(data)) + 1e-12))
                 data = data * gain
-            return np.clip(data, -0.99, 0.99).astype(np.float32)
+            res = np.clip(data, -0.99, 0.99).astype(np.float32)
+            if hasattr(self, "_synth_cache"):
+                if len(self._synth_cache) > 256:
+                    self._synth_cache.clear()
+                self._synth_cache[cache_key] = res
+            return res
         except Exception:
             pass
 

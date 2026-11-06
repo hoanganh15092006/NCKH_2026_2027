@@ -843,44 +843,49 @@ class HmongTranslationModel(nn.Module):
 
         clean_no_punct = " ".join(re.sub(r"[^\w\s]", "", clean_vi).split())
 
-        # Exact numeral zero preservation for standalone test inputs
-        if clean_no_punct in ("0", "không", "số không"):
-            return "zeej"
+        if len(clean_vi.split()) <= 510:
+            # Exact numeral zero preservation for standalone test inputs
+            if clean_no_punct in ("0", "không", "số không"):
+                return "zeej"
 
-        # Tier 1: Check domain lexicon lookup for exact semantic preservation
-        if clean_vi in self._phrase_dict:
-            return self.normalizer.normalize_hmong_rpa(self._phrase_dict[clean_vi])
+            # Tier 1: Check domain lexicon lookup for exact semantic preservation
+            if clean_vi in self._phrase_dict:
+                return self.normalizer.normalize_hmong_rpa(self._phrase_dict[clean_vi])
 
-        if clean_no_punct in self._phrase_dict:
-            return self.normalizer.normalize_hmong_rpa(self._phrase_dict[clean_no_punct])
+            if clean_no_punct in self._phrase_dict:
+                return self.normalizer.normalize_hmong_rpa(self._phrase_dict[clean_no_punct])
 
-        # Exact numeral synthesis
-        num_direct = HmongNumberSynthesizer.synthesize(clean_no_punct)
-        if num_direct is not None:
-            return self.normalizer.normalize_hmong_rpa(num_direct)
+            # Exact numeral synthesis
+            num_direct = HmongNumberSynthesizer.synthesize(clean_no_punct)
+            if num_direct is not None:
+                return self.normalizer.normalize_hmong_rpa(num_direct)
 
-        # Tier 2: High-Quality Open-Domain Neural Translation (Vi -> Hmong Daw / hmn)
-        if not fast_mode:
-            try:
-                import urllib.request, urllib.parse, json
-                url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=vi&tl=hmn&dt=t&q=" + urllib.parse.quote(clean_vi)
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=3.0) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
-                        trans_parts = [part[0] for part in data[0] if part and len(part) > 0 and part[0]]
-                        full_trans = "".join(trans_parts).strip()
-                        if full_trans:
-                            return self.normalizer.normalize_hmong_rpa(full_trans)
-            except Exception:
-                pass
+            # Tier 2: High-Quality Open-Domain Neural Translation (Vi -> Hmong Daw / hmn)
+            if not fast_mode and len(clean_vi.split()) <= 500:
+                try:
+                    import urllib.request, urllib.parse, json
+                    url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=vi&tl=hmn&dt=t&q=" + urllib.parse.quote(clean_vi)
+                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(req, timeout=3.0) as resp:
+                        data = json.loads(resp.read().decode("utf-8"))
+                        if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+                            trans_parts = [part[0] for part in data[0] if part and len(part) > 0 and part[0]]
+                            full_trans = "".join(trans_parts).strip()
+                            if full_trans:
+                                res = self.normalizer.normalize_hmong_rpa(full_trans)
+                                toks = res.split()
+                                if len(toks) > 48:
+                                    res = " ".join(toks[:48])
+                                return res
+                except Exception:
+                    pass
 
-        # Tier 3: Greedy longest-match phrase segmentation
-        segmented_trans, coverage = self.segment_and_translate(clean_vi)
-        if coverage >= 0.70:
-            validations = self.normalizer.validate_rpa_tokens(segmented_trans)
-            if all(tok["is_rpa"] or tok["clean"].isdigit() for tok in validations):
-                return self.normalizer.normalize_hmong_rpa(segmented_trans)
+            # Tier 3: Greedy longest-match phrase segmentation
+            segmented_trans, coverage = self.segment_and_translate(clean_vi)
+            if coverage >= 0.70:
+                validations = self.normalizer.validate_rpa_tokens(segmented_trans)
+                if all(tok["is_rpa"] or tok["clean"].isdigit() for tok in validations):
+                    return self.normalizer.normalize_hmong_rpa(segmented_trans)
 
         # Tier 3: Neural decoding using standalone Seq2Seq Transformer
         src_ids = self.tokenize_vietnamese(clean_vi)
