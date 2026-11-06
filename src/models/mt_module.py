@@ -817,6 +817,45 @@ class HmongTranslationModel(nn.Module):
         raw_result = " ".join(translated_tokens)
         return self.normalizer.normalize_hmong_rpa(raw_result), coverage
 
+    def query_glosbe(self, text_vi: str, timeout: float = 2.0) -> Optional[str]:
+        """
+        Tra cứu bản dịch Tiếng Việt sang Tiếng H'Mông trên từ điển Glosbe (https://vi.glosbe.com/vi/hmn/).
+        Được ưu tiên hàng đầu theo yêu cầu người dùng.
+        """
+        clean = text_vi.strip().lower()
+        if not clean or len(clean) > 80:
+            return None
+
+        if not hasattr(self, "_glosbe_cache"):
+            self._glosbe_cache = {}
+        if clean in self._glosbe_cache:
+            return self._glosbe_cache[clean]
+
+        import requests, urllib.parse, re
+        try:
+            url = f"https://vi.glosbe.com/vi/hmn/{urllib.parse.quote(clean)}"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "vi,en;q=0.9",
+                "Referer": "https://vi.glosbe.com/"
+            }
+            r = requests.get(url, headers=headers, timeout=timeout)
+            if r.status_code == 200:
+                h3_list = re.findall(r'<h3[^>]*>(.*?)</h3>', r.text, re.DOTALL)
+                for h in h3_list:
+                    cand = re.sub(r'<[^>]+>', '', h).strip()
+                    if not cand or any(skip in cand.lower() for skip in ['từ điển', 'glosbe', 'ngữ pháp', 'ví dụ', 'dịch', 'phát âm', 'bản dịch']):
+                        continue
+                    if cand.lower() != clean:
+                        val = self.normalizer.validate_rpa_tokens(cand)
+                        if any(v["is_rpa"] for v in val):
+                            self._glosbe_cache[clean] = cand
+                            return cand
+        except Exception:
+            pass
+        return None
+
     @torch.no_grad()
     def translate(
         self,
@@ -830,10 +869,11 @@ class HmongTranslationModel(nn.Module):
         """
         Translates a Vietnamese string to Hmong Daw RPA using a Multi-Tiered Hybrid Engine:
           Tier 1: Exact whole-utterance bilingual lexicon match and number synthesis.
-          Tier 2: Greedy longest-match phrase segmentation & rule engine (coverage >= 0.70).
-          Tier 3: Standalone Seq2Seq Transformer decoding with <unk> logit suppression
-                  (next_token_logits[:, self.unk_token_id] = -inf) to prohibit <unk> generation.
-          Tier 4: Post-generation zero-<unk> enforcer & RPA 8-tone normalizer.
+          Tier 2: Glosbe Online Dictionary lookup (https://vi.glosbe.com/vi/hmn/).
+          Tier 3: Open-Domain Neural Machine Translation (Google Translate Vi->Hmong).
+          Tier 4: Greedy longest-match phrase segmentation & rule engine (coverage >= 0.70).
+          Tier 5: Standalone Seq2Seq Transformer decoding with <unk> logit suppression.
+          Tier 6: Post-generation zero-<unk> enforcer & RPA 8-tone normalizer.
         Guarantees ZERO <unk> tokens for common conversational language.
         """
         self.eval()
@@ -860,7 +900,20 @@ class HmongTranslationModel(nn.Module):
             if num_direct is not None:
                 return self.normalizer.normalize_hmong_rpa(num_direct)
 
-            # Tier 2: High-Quality Open-Domain Neural Translation (Vi -> Hmong Daw / hmn)
+            # Tier 2: Glosbe Online Dictionary Priority Lookup (https://vi.glosbe.com/vi/hmn/)
+            if not fast_mode and len(clean_vi.split()) <= 8:
+                glosbe_trans = self.query_glosbe(clean_vi) or self.query_glosbe(clean_no_punct)
+                if glosbe_trans:
+                    return self.normalizer.normalize_hmong_rpa(glosbe_trans)
+
+            # Tier 3: Greedy longest-match phrase segmentation from curated lexicon
+            segmented_trans, coverage = self.segment_and_translate(clean_vi)
+            if coverage >= 0.70:
+                validations = self.normalizer.validate_rpa_tokens(segmented_trans)
+                if all(tok["is_rpa"] or tok["clean"].isdigit() for tok in validations):
+                    return self.normalizer.normalize_hmong_rpa(segmented_trans)
+
+            # Tier 4: High-Quality Open-Domain Neural Translation (Vi -> Hmong Daw / hmn)
             if not fast_mode and len(clean_vi.split()) <= 500:
                 try:
                     import urllib.request, urllib.parse, json
@@ -879,13 +932,6 @@ class HmongTranslationModel(nn.Module):
                                 return res
                 except Exception:
                     pass
-
-            # Tier 3: Greedy longest-match phrase segmentation
-            segmented_trans, coverage = self.segment_and_translate(clean_vi)
-            if coverage >= 0.70:
-                validations = self.normalizer.validate_rpa_tokens(segmented_trans)
-                if all(tok["is_rpa"] or tok["clean"].isdigit() for tok in validations):
-                    return self.normalizer.normalize_hmong_rpa(segmented_trans)
 
         # Tier 3: Neural decoding using standalone Seq2Seq Transformer
         src_ids = self.tokenize_vietnamese(clean_vi)
